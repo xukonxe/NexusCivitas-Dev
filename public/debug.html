@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Debugger</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="debugger-root">
+    <div class="debugger-container">
+      <div class="header">
+        <h1>Debugger</h1>
+      </div>
+      
+      <div class="main-content">
+        <div class="panel">
+          <div class="tab-menu">
+            <button class="tab-button active" data-tab="params-tab">参数设置</button>
+            <button class="tab-button" data-tab="response-tab">响应数据</button>
+          </div>
+          
+          <div id="params-tab" class="tab-content">
+            <div class="panel-title">
+              <h2>模型参数设置</h2>
+            </div>
+            
+            <div class="parameter-grid">
+              <div class="parameter-card">
+                <div class="parameter-title">
+                  模型 <span class="param-key">model</span>
+                </div>
+                <select id="model-selector" onchange="apiParams.model = this.value; updateAllParamValues();">
+                  <option value="deepseek-v3-250324">DeepSeek V3 (默认)</option>
+                  <option value="doubao-1.5-pro-32k">豆包 1.5 Pro 32K</option>
+                  <option value="deepseek-coder">DeepSeek Coder</option>
+                </select>
+              </div>
+              
+              <div class="parameter-card">
+                <div class="parameter-title">
+                  温度 <span class="param-key">temperature</span>
+                </div>
+                <input type="number" id="temperature-input" value="0.7" step="0.1" min="0" max="1" onchange="apiParams.temperature = parseFloat(this.value); updateAllParamValues();">
+              </div>
+              
+              <div class="parameter-card">
+                <div class="parameter-title">
+                  最大长度 <span class="param-key">max_length</span>
+                </div>
+                <input type="number" id="max-length-input" value="256" step="1" min="1" max="4096" onchange="apiParams.max_length = parseInt(this.value); updateAllParamValues();">
+              </div>
+            </div>
+          </div>
+          
+          <div id="response-tab" class="tab-content hidden">
+            <div class="panel-title">
+              <h2>响应数据</h2>
+            </div>
+            <div class="response-content">
+              <pre id="response-data"></pre>
+            </div>
+          </div>
+        </div>
+        
+        <div class="panel">
+          <div class="response-meta">
+            <div class="meta-item">
+              <span>API密钥</span>
+              <span class="meta-value" style="font-size: 0.7rem; opacity: 0.7;">d36d****-****-****-****-********a901</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="debugger.js"></script>
+</body>
+</html>

@@ -1,0 +1,161 @@
+/* 全局样式重置 */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  /* 颜色变量 */
+  --background: #0f0f19;
+  --surface-light: rgba(30, 30, 46, 0.7);
+  --surface: rgba(21, 21, 31, 0.8);
+  --primary: #6e44ff;
+  --primary-dark: #5033cc;
+  --secondary: #00eeff;
+  --accent: #ff46b9;
+  --text-primary: #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.7);
+  
+  /* 尺寸变量 */
+  --header-height: 70px;
+}
+
+body {
+  background-color: var(--background);
+  font-family: 'Noto Sans SC', 'Rajdhani', sans-serif;
+  color: var(--text-primary);
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+/* 自定义滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(21, 21, 31, 0.8);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--primary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--primary-dark);
+}
+
+/* 通用动画 */
+@keyframes float {
+  0% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-20px);
+  }
+  100% {
+    transform: translateY(0px);
+  }
+}
+
+@keyframes pulse {
+  0% { opacity: 0.5; }
+  50% { opacity: 1; }
+  100% { opacity: 0.5; }
+}
+
+/* 文本选择样式 */
+::selection {
+  background: rgba(110, 68, 255, 0.3);
+  color: white;
+}
+
+/* 链接样式 */
+a {
+  color: var(--primary);
+  text-decoration: none;
+  transition: color 0.3s ease;
+}
+
+a:hover {
+  color: var(--secondary);
+}
+
+/* 容器样式 */
+.container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 2rem;
+}
+
+/* 按钮样式 */
+button {
+  font-family: 'Noto Sans SC', 'Rajdhani', sans-serif;
+}
+
+/* 输入框样式 */
+input, textarea, select {
+  font-family: 'Noto Sans SC', 'Rajdhani', sans-serif;
+}
+
+/* 毛玻璃效果 */
+.glass {
+  background: rgba(21, 21, 31, 0.6);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* 发光效果 */
+.glow {
+  position: relative;
+}
+
+.glow::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: 16px;
+  z-index: -1;
+  background: linear-gradient(45deg, var(--primary), var(--secondary));
+  filter: blur(20px);
+  opacity: 0.15;
+  transition: opacity 0.3s ease;
+}
+
+.glow:hover::after {
+  opacity: 0.25;
+}
+
+.section {
+  padding: 6rem 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.particles {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+  opacity: 0.4;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .container {
+    padding: 0 1rem;
+  }
+  
+  .section {
+    padding: 4rem 0;
+  }
+}
