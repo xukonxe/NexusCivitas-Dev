@@ -41,7 +41,6 @@ function App() {
         <Hero />
         <Features />
         <About />
-        <ChatContextManager />
         <Footer />
       </motion.div>
     </div>

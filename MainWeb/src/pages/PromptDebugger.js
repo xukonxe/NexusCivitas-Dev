@@ -82,6 +82,8 @@ const ActionButton = styled.button`
   font-size: 0.8rem;
   cursor: pointer;
   transition: all 0.3s ease;
+  opacity: ${props => props.disabled ? '0.6' : '1'};
+  pointer-events: ${props => props.disabled ? 'none' : 'auto'};
   
   &:hover {
     background: ${props => props.primary ? 'linear-gradient(90deg, #5033cc 0%, #3d2799 100%)' : 'rgba(255, 255, 255, 0.1)'};
@@ -392,6 +394,7 @@ function PromptDebugger() {
       latency: 0
     }
   });
+  const [streamingContent, setStreamingContent] = useState('');
   const [apiParams, setApiParams] = useState({
     temperature: 0.7,
     max_tokens: 4096,
@@ -402,6 +405,9 @@ function PromptDebugger() {
   });
   const [apiKey, setApiKey] = useState('d36d3932-e745-4340-9737-5dff42f1a901');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [finalResponse, setFinalResponse] = useState(null);
+  const [abortController, setAbortController] = useState(null);
 
   const handleAddMessage = () => {
     if (newMessage.content.trim() === '') return;
@@ -448,13 +454,139 @@ function PromptDebugger() {
     });
   };
   
-  const handleSubmit = async () => {
-    setIsSubmitting(true);
+  const handleStreamResponse = async (reader, startTime, responseMetadata) => {
+    const decoder = new TextDecoder();
+    let accumulatedContent = '';
+    let id, model, created, object, service_tier;
     
     try {
-      const startTime = Date.now();
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) {
+          break;
+        }
+        
+        // 解析SSE数据
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            if (line.includes('[DONE]')) {
+              // 流结束
+              const endTime = Date.now();
+              const latency = ((endTime - startTime) / 1000).toFixed(2);
+              
+              // 设置最终响应
+              setFinalResponse({
+                content: accumulatedContent,
+                metadata: {
+                  model: model || apiParams.model,
+                  usage: responseMetadata.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+                  latency: latency,
+                  id: id,
+                  created: created,
+                  object: object,
+                  service_tier: service_tier
+                }
+              });
+              
+              // 将最终响应添加到消息列表
+              setMessages(prevMessages => [...prevMessages, { 
+                role: 'assistant', 
+                content: accumulatedContent 
+              }]);
+              
+              setIsStreaming(false);
+              break;
+            } else {
+              // 处理内容块
+              try {
+                const data = JSON.parse(line.substring(6));
+                
+                // 存储响应元数据
+                if (!id && data.id) id = data.id;
+                if (!model && data.model) model = data.model;
+                if (!created && data.created) created = data.created;
+                if (!object && data.object) object = data.object;
+                if (!service_tier && data.service_tier) service_tier = data.service_tier;
+                
+                // 获取实际内容
+                if (data.choices && data.choices.length > 0) {
+                  const delta = data.choices[0].delta;
+                  
+                  if (delta && delta.content) {
+                    accumulatedContent += delta.content;
+                    setStreamingContent(accumulatedContent);
+                  }
+                  
+                  // 更新用量数据
+                  if (data.usage) {
+                    responseMetadata.usage = data.usage;
+                  }
+                }
+              } catch (e) {
+                console.error('解析SSE数据时出错:', e);
+              }
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('流处理过程中出错:', error);
+      setIsStreaming(false);
+    }
+  };
+  
+  const handleStopRequest = () => {
+    if (abortController) {
+      abortController.abort();
+      console.log('请求已手动终止');
       
-      // 按照API要求构建请求体
+      // 更新UI状态
+      setIsStreaming(false);
+      setIsSubmitting(false);
+      
+      // 设置最终响应，标记为用户终止
+      if (streamingContent) {
+        setFinalResponse({
+          content: streamingContent,
+          metadata: {
+            model: apiParams.model,
+            usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+            latency: 0,
+            id: '用户终止',
+            finish_reason: 'user_cancelled'
+          }
+        });
+        
+        // 将当前内容添加到消息列表
+        setMessages(prevMessages => [...prevMessages, { 
+          role: 'assistant', 
+          content: streamingContent 
+        }]);
+      }
+    }
+  };
+  
+  const handleSubmit = async () => {
+    setIsSubmitting(true);
+    setIsStreaming(true);
+    setStreamingContent('');
+    setFinalResponse(null);
+    
+    // 创建新的AbortController实例
+    const controller = new AbortController();
+    setAbortController(controller);
+    
+    const startTime = Date.now();
+    const responseMetadata = {
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+    };
+    
+    try {
+      // 按照API要求构建请求体，添加stream: true参数
       const requestBody = {
         model: apiParams.model,
         messages: messages,
@@ -462,10 +594,11 @@ function PromptDebugger() {
         max_tokens: parseInt(apiParams.max_tokens),
         top_p: parseFloat(apiParams.top_p),
         frequency_penalty: parseFloat(apiParams.frequency_penalty),
-        presence_penalty: parseFloat(apiParams.presence_penalty)
+        presence_penalty: parseFloat(apiParams.presence_penalty),
+        stream: true
       };
       
-      console.log('发送请求:', requestBody);
+      console.log('发送流式请求:', requestBody);
       
       const response = await fetch('https://ark.cn-beijing.volces.com/api/v3/chat/completions', {
         method: 'POST',
@@ -473,59 +606,39 @@ function PromptDebugger() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`
         },
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify(requestBody),
+        signal: controller.signal  // 添加AbortController信号
       });
-      
-      const responseData = await response.json();
-      const endTime = Date.now();
-      const latency = ((endTime - startTime) / 1000).toFixed(2);
-      
-      console.log('API响应:', responseData);
       
       if (!response.ok) {
-        throw new Error(responseData.error?.message || responseData.message || '请求失败');
+        const errorData = await response.json();
+        throw new Error(errorData.error?.message || errorData.message || '请求失败');
       }
       
-      // 根据实际返回格式处理响应数据
-      if (responseData.choices && responseData.choices.length > 0) {
-        const assistantMessage = responseData.choices[0].message;
-        
-        // 更新响应状态
+      // 获取响应流并处理
+      const reader = response.body.getReader();
+      await handleStreamResponse(reader, startTime, responseMetadata);
+      
+    } catch (error) {
+      // 检查是否是用户终止导致的错误
+      if (error.name === 'AbortError') {
+        console.log('请求被用户终止');
+      } else {
+        console.error('API调用失败:', error);
         setResponse({
-          content: assistantMessage.content,
+          content: `请求失败: ${error.message}`,
           metadata: {
-            model: responseData.model,
-            usage: responseData.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-            latency: latency,
-            id: responseData.id,
-            created: responseData.created,
-            object: responseData.object,
-            service_tier: responseData.service_tier,
-            finish_reason: responseData.choices[0].finish_reason
+            model: apiParams.model,
+            usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+            latency: 0,
+            error: error.message
           }
         });
-        
-        // 将AI响应添加到消息列表
-        setMessages([...messages, { 
-          role: 'assistant', 
-          content: assistantMessage.content 
-        }]);
-      } else {
-        throw new Error('API返回的响应格式不正确');
       }
-    } catch (error) {
-      console.error('API调用失败:', error);
-      setResponse({
-        content: `请求失败: ${error.message}`,
-        metadata: {
-          model: apiParams.model,
-          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-          latency: 0,
-          error: error.message
-        }
-      });
+      setIsStreaming(false);
     } finally {
       setIsSubmitting(false);
+      setAbortController(null);  // 清理AbortController
     }
   };
   
@@ -795,6 +908,19 @@ function PromptDebugger() {
             >
               {isSubmitting ? '请求中...' : '发送请求'}
             </ActionButton>
+            
+            {isStreaming && (
+              <ActionButton 
+                onClick={handleStopRequest}
+                style={{ 
+                  background: 'rgba(255, 68, 68, 0.1)', 
+                  color: '#ff4444', 
+                  borderColor: 'rgba(255, 68, 68, 0.3)' 
+                }}
+              >
+                停止生成
+              </ActionButton>
+            )}
           </ButtonGroup>
         </Panel>
         
@@ -802,10 +928,14 @@ function PromptDebugger() {
           <PanelTitle>
             响应结果
             <div className="actions">
-              <ActionButton onClick={() => {
-                navigator.clipboard.writeText(response.content);
-                alert('已复制到剪贴板');
-              }}>
+              <ActionButton 
+                onClick={() => {
+                  const contentToCopy = finalResponse ? finalResponse.content : streamingContent;
+                  navigator.clipboard.writeText(contentToCopy);
+                  alert('已复制到剪贴板');
+                }}
+                disabled={!streamingContent && !finalResponse}
+              >
                 复制
               </ActionButton>
             </div>
@@ -814,42 +944,56 @@ function PromptDebugger() {
           <ResponseMeta>
             <div className="meta-item">
               <span>请求ID</span>
-              <span className="meta-value">{response.metadata.id || '-'}</span>
+              <span className="meta-value">
+                {finalResponse?.metadata.id || '-'}
+              </span>
             </div>
             <div className="meta-item">
               <span>模型</span>
-              <span className="meta-value">{response.metadata.model}</span>
+              <span className="meta-value">
+                {finalResponse?.metadata.model || apiParams.model}
+              </span>
             </div>
             <div className="meta-item">
               <span>提示词tokens</span>
-              <span className="meta-value">{response.metadata.usage.prompt_tokens}</span>
+              <span className="meta-value">
+                {finalResponse?.metadata.usage.prompt_tokens || 0}
+              </span>
             </div>
             <div className="meta-item">
               <span>生成tokens</span>
-              <span className="meta-value">{response.metadata.usage.completion_tokens}</span>
+              <span className="meta-value">
+                {finalResponse?.metadata.usage.completion_tokens || 0}
+              </span>
             </div>
             <div className="meta-item">
               <span>总tokens</span>
-              <span className="meta-value">{response.metadata.usage.total_tokens}</span>
+              <span className="meta-value">
+                {finalResponse?.metadata.usage.total_tokens || 0}
+              </span>
             </div>
             <div className="meta-item">
               <span>停止原因</span>
-              <span className="meta-value">{response.metadata.finish_reason || '-'}</span>
+              <span className="meta-value">
+                {finalResponse?.metadata.finish_reason || '-'}
+              </span>
             </div>
             <div className="meta-item">
               <span>响应时间</span>
-              <span className="meta-value">{response.metadata.latency}s</span>
+              <span className="meta-value">
+                {finalResponse?.metadata.latency || (isStreaming ? '计时中...' : '0')}s
+              </span>
             </div>
-            {response.metadata.error && (
+            {finalResponse?.metadata.error && (
               <div className="meta-item error">
                 <span>错误信息</span>
-                <span className="meta-value">{response.metadata.error}</span>
+                <span className="meta-value">{finalResponse.metadata.error}</span>
               </div>
             )}
           </ResponseMeta>
           
           <ResponseContent>
-            {isSubmitting ? (
+            {isSubmitting && !streamingContent ? (
               <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem' }}>
                 <svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                   <style>
@@ -861,8 +1005,19 @@ function PromptDebugger() {
                   <circle className="path" cx="12" cy="12" r="10" fill="none" stroke="#6e44ff" strokeWidth="3" strokeLinecap="round"></circle>
                 </svg>
               </div>
-            ) : response.content ? (
-              response.content
+            ) : streamingContent ? (
+              <>
+                {streamingContent}
+                {isStreaming && (
+                  <span className="cursor" style={{ display: 'inline-block', width: '8px', height: '18px', background: '#6e44ff', marginLeft: '2px', verticalAlign: 'middle', animation: 'blink 1s infinite' }}>
+                    <style>
+                      {`@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }`}
+                    </style>
+                  </span>
+                )}
+              </>
+            ) : finalResponse?.content ? (
+              finalResponse.content
             ) : (
               <div style={{ color: 'rgba(255, 255, 255, 0.5)', textAlign: 'center' }}>
                 暂无响应数据
@@ -871,7 +1026,15 @@ function PromptDebugger() {
           </ResponseContent>
           
           <StatusBar>
-            <span>请求状态: {isSubmitting ? '处理中' : '就绪'}</span>
+            <span>
+              请求状态: {
+                isSubmitting 
+                  ? (isStreaming ? '接收中' : '处理中') 
+                  : finalResponse?.metadata.finish_reason === 'user_cancelled'
+                    ? '用户终止'
+                    : '就绪'
+              }
+            </span>
             <span>版本: v0.1.0</span>
           </StatusBar>
         </Panel>
